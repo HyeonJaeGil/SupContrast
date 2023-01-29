@@ -4,6 +4,85 @@ import math
 import numpy as np
 import torch
 import torch.optim as optim
+import os
+from os.path import exists, join
+from glob import glob
+from PIL import Image
+from thermal_utils import processThermalImage
+
+
+def get_mean_std(dataset_folder):
+
+    r_mean, g_mean, b_mean = 0, 0, 0
+    r_mean_sq, g_mean_sq, b_mean_sq = 0, 0, 0
+    n = 0
+
+    from tqdm import tqdm
+    for file_name in tqdm(os.listdir(dataset_folder)):
+        
+        if not file_name.endswith(".png") or file_name.endswith(".jpg"):
+            continue
+        
+        image_array = np.array(path_to_pil_thermal_img(os.path.join(dataset_folder, file_name)), dtype=float)/255
+        r_channel, g_channel, b_channel = image_array[:, :, 0], image_array[:, :, 1], image_array[:, :, 2]
+        r_channel_sq, g_channel_sq, b_channel_sq = (r_channel ** 2), (g_channel ** 2), (b_channel ** 2)
+
+        n += 1
+        r_mean += (np.mean(r_channel) - r_mean) / n
+        g_mean += (np.mean(g_channel) - g_mean) / n
+        b_mean += (np.mean(b_channel) - b_mean) / n
+        r_mean_sq += (np.mean(r_channel_sq) - r_mean_sq) / n
+        g_mean_sq += (np.mean(g_channel_sq) - g_mean_sq) / n
+        b_mean_sq += (np.mean(b_channel_sq) - b_mean_sq) / n
+    
+    mean = (r_mean, g_mean, b_mean)
+    std = (math.sqrt(r_mean_sq - r_mean**2), math.sqrt(g_mean_sq - g_mean**2), math.sqrt(b_mean_sq - b_mean**2))
+    print('mean: ', mean)
+    print('std: ', std)
+    return tuple([round(x, 4) for x in mean]), tuple([round(x, 4) for x in std])
+
+def path_to_pil_img(path):
+    return Image.open(path).convert("RGB")
+
+
+def path_to_pil_thermal_img(path):
+    image = processThermalImage(path, crop=True, undistort=True, 
+                            normalize_minmax=True, keeptype=True)
+    return Image.fromarray(image).convert("RGB")
+
+
+class CustomDataset(torch.utils.data.Dataset):
+    def __init__(self, root, labels=None, transform=None):
+        super().__init__()
+        self.root = root
+        self.labels = labels
+        self.transform = transform
+
+        if not exists(root):
+            raise FileNotFoundError(f"Folder {root} does not exist")
+        
+        self.data_path = []
+        for folder in os.listdir(root):
+            data_path = join(root, folder, 'image', 'stereo_thermal_14_left')
+            self.data_path.extend(sorted(glob(join(data_path, "*.png"), recursive=True)))
+
+        # self.data_path = sorted(glob(join(root, "**", "*.png"), recursive=True))
+        print(f"Found {len(self.data_path)} images in {root} folder")
+
+
+    def __getitem__(self, index):
+        img = path_to_pil_thermal_img(self.data_path[index])
+        # label = self.labels[index]
+        label = 0
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        return img, label
+
+    def __len__(self):
+        return len(self.data_path)
+
 
 
 class TwoCropTransform:
@@ -45,7 +124,7 @@ def accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 

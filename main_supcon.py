@@ -9,7 +9,7 @@ import math
 import tensorboard_logger as tb_logger
 import torch
 import torch.backends.cudnn as cudnn
-from torchvision import transforms, datasets
+from torchvision import transforms, datasets, utils
 
 from util import TwoCropTransform, AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
@@ -33,7 +33,7 @@ def parse_option():
                         help='save frequency')
     parser.add_argument('--batch_size', type=int, default=256,
                         help='batch_size')
-    parser.add_argument('--num_workers', type=int, default=16,
+    parser.add_argument('--num_workers', type=int, default=4,
                         help='num of workers to use')
     parser.add_argument('--epochs', type=int, default=1000,
                         help='number of training epochs')
@@ -80,10 +80,10 @@ def parse_option():
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
-    if opt.dataset == 'path':
-        assert opt.data_folder is not None \
-            and opt.mean is not None \
-            and opt.std is not None
+    # if opt.dataset == 'path':
+    #     assert opt.data_folder is not None \
+    #         and opt.mean is not None \
+    #         and opt.std is not None
 
     # set the path according to the environment
     if opt.data_folder is None:
@@ -118,12 +118,10 @@ def parse_option():
             opt.warmup_to = opt.learning_rate
 
     opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
-    if not os.path.isdir(opt.tb_folder):
-        os.makedirs(opt.tb_folder)
+    os.makedirs(opt.tb_folder, exist_ok=True)
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
-    if not os.path.isdir(opt.save_folder):
-        os.makedirs(opt.save_folder)
+    os.makedirs(opt.save_folder, exist_ok=True)
 
     return opt
 
@@ -176,6 +174,31 @@ def set_loader(opt):
     return train_loader
 
 
+def set_custom_loader(opt):
+    if not os.path.isdir(opt.data_folder):
+        raise ValueError('data_folder must be set. (current: {})'.format(opt.data_folder))
+
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomApply([
+            transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
+        ], p=0.8),
+        transforms.RandomGrayscale(p=0.2),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.5438, 0.5438, 0.5438), std=(0.2104, 0.2104, 0.2104)),
+    ])
+
+    from util import CustomDataset
+    train_dataset = CustomDataset(root=opt.data_folder,
+                                  transform=TwoCropTransform(train_transform))
+    train_sampler = None
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=opt.batch_size, shuffle=(train_sampler is None),
+        num_workers=opt.num_workers, pin_memory=True, sampler=train_sampler)
+    return train_loader
+
+
 def set_model(opt):
     model = SupConResNet(name=opt.model)
     criterion = SupConLoss(temperature=opt.temp)
@@ -194,6 +217,29 @@ def set_model(opt):
     return model, criterion
 
 
+def set_model_new(opt):
+    import torchvision
+    if opt.model == 'resnet18':
+        model = torchvision.models.resnet18(pretrained=False)
+    elif opt.model == 'resnet50':
+        model = torchvision.models.resnet50(pretrained=False)
+    
+    criterion = SupConLoss(temperature=opt.temp)
+
+    # enable synchronized Batch Normalization
+    if opt.syncBN:
+        model = apex.parallel.convert_syncbn_model(model)
+
+    if torch.cuda.is_available():
+        if torch.cuda.device_count() > 1:
+            model = torch.nn.DataParallel(model)
+        model = model.cuda()
+        criterion = criterion.cuda()
+        cudnn.benchmark = True
+    
+    return model, criterion
+
+
 def train(train_loader, model, criterion, optimizer, epoch, opt):
     """one epoch training"""
     model.train()
@@ -207,6 +253,14 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         data_time.update(time.time() - end)
 
         images = torch.cat([images[0], images[1]], dim=0)
+        # import matplotlib.pyplot as plt
+        # print(images.shape)
+        # grid = utils.make_grid(images.detach().cpu(), nrow=8, padding=2, 
+        #           normalize=True, range=None, scale_each=False, pad_value=0)
+        # plt.imshow(grid.numpy().transpose((1, 2, 0)))
+        # plt.savefig(f'./{idx}.png')
+        # del grid        
+
         if torch.cuda.is_available():
             images = images.cuda(non_blocking=True)
             labels = labels.cuda(non_blocking=True)
@@ -217,6 +271,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 
         # compute loss
         features = model(images)
+        del images
         f1, f2 = torch.split(features, [bsz, bsz], dim=0)
         features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
         if opt.method == 'SupCon':
@@ -256,7 +311,10 @@ def main():
     opt = parse_option()
 
     # build data loader
-    train_loader = set_loader(opt)
+    if opt.dataset == 'path':
+        train_loader = set_custom_loader(opt)
+    else:
+        train_loader = set_loader(opt)
 
     # build model and criterion
     model, criterion = set_model(opt)
