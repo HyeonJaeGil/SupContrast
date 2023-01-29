@@ -186,6 +186,40 @@ class SupConResNet(nn.Module):
         return feat
 
 
+class SupConResNetTorchvision(nn.Module):
+    """backbone + projection head"""
+    def __init__(self, name='resnet50', head='mlp', feat_dim=128):
+        super(SupConResNetTorchvision, self).__init__()
+        
+        print('loading backbone from torchvision.resnet')
+        import torchvision
+        if name == 'resnet18':
+            model = torchvision.models.resnet18(pretrained=True)
+        elif name == 'resnet50':
+            model = torchvision.models.resnet50(pretrained=True)
+        layers = list(model.children())[:-1]
+        model = torch.nn.Sequential(*layers)
+        self.encoder = model
+        
+        if head == 'linear':
+            self.head = nn.Linear(2048, feat_dim)
+        elif head == 'mlp':
+            self.head = nn.Sequential(
+                nn.Linear(2048, 2048),
+                nn.ReLU(inplace=True),
+                nn.Linear(2048, feat_dim)
+            )
+        else:
+            raise NotImplementedError(
+                'head not supported: {}'.format(head))
+
+    def forward(self, x):
+        feat = self.encoder(x)
+        feat = torch.flatten(feat, 1)
+        feat = F.normalize(self.head(feat), dim=1)
+        return feat
+
+
 class SupCEResNet(nn.Module):
     """encoder + classifier"""
     def __init__(self, name='resnet50', num_classes=10):
