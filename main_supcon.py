@@ -5,6 +5,7 @@ import sys
 import argparse
 import time
 import math
+from tqdm import tqdm
 
 import tensorboard_logger as tb_logger
 import torch
@@ -238,11 +239,11 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
     losses = AverageMeter()
 
     end = time.time()
-    for idx, (images, labels) in enumerate(train_loader):
+    for idx, (images, labels) in enumerate(tqdm(train_loader)):
         data_time.update(time.time() - end)
 
         images = torch.cat([images[0], images[1]], dim=0)
-        print(images.shape)
+        # print(images.shape)
         
         # # debug image samples
         # import matplotlib.pyplot as plt

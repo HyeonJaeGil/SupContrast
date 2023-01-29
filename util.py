@@ -9,6 +9,7 @@ from os.path import exists, join
 from glob import glob
 from PIL import Image
 from thermal_utils import processThermalImage
+from random import sample
 
 
 def get_mean_std(dataset_folder):
@@ -68,6 +69,8 @@ class CustomDataset(torch.utils.data.Dataset):
 
         # self.data_path = sorted(glob(join(root, "**", "*.png"), recursive=True))
         print(f"Found {len(self.data_path)} images in {root} folder")
+        self.data_path = sample(self.data_path, 10000) if len(self.data_path)>10000 else self.data_path
+        print(f"After random sampling -> {len(self.data_path)} images")
 
 
     def __getitem__(self, index):

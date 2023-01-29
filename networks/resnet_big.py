@@ -194,9 +194,9 @@ class SupConResNetTorchvision(nn.Module):
         print('loading backbone from torchvision.resnet')
         import torchvision
         if name == 'resnet18':
-            model = torchvision.models.resnet18(pretrained=True)
+            model = torchvision.models.resnet18(pretrained=False)
         elif name == 'resnet50':
-            model = torchvision.models.resnet50(pretrained=True)
+            model = torchvision.models.resnet50(pretrained=False)
         layers = list(model.children())[:-1]
         model = torch.nn.Sequential(*layers)
         self.encoder = model
